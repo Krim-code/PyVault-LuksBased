@@ -26,8 +26,6 @@ def new_vault(vault):
         print("File already exists")
         sys.exit(1)
 
-   
-
     ident = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
     password = prompt_password()
 
