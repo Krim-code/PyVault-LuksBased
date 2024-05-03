@@ -1,71 +1,65 @@
 #!/usr/bin/env python3
 import os
 import subprocess
+import sys
 import shutil
 import random
+import string
 import hashlib
 
 def prompt_password():
-    PASSWORD = input("Enter password: ")
-    return hashlib.sha256(PASSWORD.encode()).hexdigest()
+    password = input("Enter password: ")
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def usage():
     print("Usage: vault <new|open|close|resize> <vault>")
-    exit(1)
+    sys.exit(1)
 
-def luks_open(vault, ident):
-    PASSWORD = prompt_password()
-    subprocess.run(['echo', PASSWORD], stdout=subprocess.PIPE)
-    subprocess.run(['sudo', 'cryptsetup', '-q', 'luksOpen', vault, ident], stdout=subprocess.PIPE)
+def luks_open(vault, ident, password):
+    subprocess.run(['sudo', 'cryptsetup', '-q', '-d', '-', 'luksOpen', vault, ident], input=password.encode())
 
 def luks_close(ident):
-    subprocess.run(['sudo', 'cryptsetup', '-q', 'luksClose', ident], stdout=subprocess.PIPE)
+    subprocess.run(['sudo', 'cryptsetup', '-q', 'luksClose', ident])
 
-def run_command(command):
-    subprocess.run(command, shell=True, stdout=subprocess.PIPE)
-
-def new(vault):
+def new_vault(vault):
     if os.path.exists(vault):
         print("File already exists")
-        exit(1)
-    
-    random_str = ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', k=10))
-    ident = vault + random_str
+        sys.exit(1)
 
-    PASSWORD = prompt_password()
-    
+   
+
+    ident = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+    password = prompt_password()
+
     with open(vault, 'wb') as f:
-        f.write(os.urandom(32*1024*1024))
-        
-    subprocess.run(['echo', PASSWORD], stdout=subprocess.PIPE)
-    subprocess.run(['sudo', 'cryptsetup', '-q', '-d', '-', 'luksFormat', vault], stdout=subprocess.PIPE)
-    
-    luks_open(vault, ident)
-    run_command(f'sudo mkfs.ext4 -Fq /dev/mapper/{ident}')
+        f.truncate(32 * 1024 * 1024)
+
+    subprocess.run(['cryptsetup', '-q', '-d', '-', 'luksFormat', vault], input=password.encode())
+    luks_open(vault, ident, password)
+    subprocess.run(['sudo', 'mkfs.ext4', '-Fq', '/dev/mapper/' + ident])
     luks_close(ident)
 
 def open_vault(vault):
     base = os.path.basename(vault)
-    if not os.path.exists(base):
+    if not os.path.exists(vault):
         print("You need to be in the same directory as the vault file")
-        exit(1)
+        sys.exit(1)
 
     if os.path.isdir(base):
-        print(f"There already exists a directory {base}")
-        exit(1)
+        print("There already exists a directory", base)
+        sys.exit(1)
 
-    random_str = ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', k=10))
-    ident = base + random_str
-    newname = '.' + base + '-' + ident
+    ident = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+    newname = "." + base + "-" + ident
 
-    PASSWORD = prompt_password()
+    password = prompt_password()
 
     shutil.move(vault, newname)
 
-    luks_open(newname, ident)
-    os.makedirs(base)
-    run_command(f'sudo mount /dev/mapper/{ident} {base}')
-    os.chown(base, os.getuid(), os.getgid())
+    luks_open(newname, ident, password)
+    os.mkdir(vault)
+    subprocess.run(['sudo', 'mount', '/dev/mapper/' + ident, vault])
+    subprocess.run(['sudo', 'chown', os.getlogin(), vault])
 
 def close_vault(vault):
     base = os.path.basename(vault)
@@ -82,49 +76,48 @@ def close_vault(vault):
     
     ident = candidates[0].split('-')[1]
     luks_close(ident)
-    run_command(f'sudo umount {opened}')
+    subprocess.run(['sudo', 'umount', opened])
     shutil.rmtree(opened)
     shutil.move(candidates[0], opened)
 
 def resize_vault(vault):
     if not os.path.exists(vault):
         print("You need to be in the same directory as the vault file")
-        exit(1)
+        sys.exit(1)
 
-    base = os.path.basename(vault)
-    ident = base + ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', k=10))
-    bak_name = f'.{ident}.bak'
-
-    shutil.copy(vault, bak_name)
+    ident = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+    subprocess.run(['cp', vault, '.' + ident + '.bak'])
 
     current_size = os.path.getsize(vault)
-    print(f"Current: {current_size}")
-    increase = input("Expand by: ")
+    print("Current:", current_size)
+    increase = int(input("Expand by: "))
 
-    subprocess.run(['qemu-img', 'resize', '-q', '-f', 'raw', vault, f'+{increase}'], stdout=subprocess.PIPE)
+    subprocess.run(['qemu-img', 'resize', '-q', '-f', 'raw', vault, '+' + str(increase)])
 
-    PASSWORD = prompt_password()
-    
-    luks_open(vault, ident)
-    subprocess.run(['echo', PASSWORD], stdout=subprocess.PIPE)
-    subprocess.run(['sudo', 'cryptsetup', '-q', '-d', '-', 'resize', f'/dev/mapper/{ident}'], stdout=subprocess.PIPE)
-    subprocess.run(['sudo', 'e2fsck', '-f', f'/dev/mapper/{ident}'], stdout=subprocess.PIPE)
-    subprocess.run(['sudo', 'resize2fs', f'/dev/mapper/{ident}'], stdout=subprocess.PIPE)
+    password = prompt_password()
+    luks_open(vault, ident, password)
+
+    subprocess.run(['sudo', 'cryptsetup', '-q', '-d', '-', 'resize', '/dev/mapper/' + ident])
+    subprocess.run(['sudo', 'e2fsck', '-f', '/dev/mapper/' + ident])
+    subprocess.run(['sudo', 'resize2fs', '/dev/mapper/' + ident])
+
     luks_close(ident)
-
-    os.remove(bak_name)
+    os.remove('.' + ident + '.bak')
 
 if __name__ == "__main__":
-    import sys
     if len(sys.argv) < 3:
         usage()
-    if sys.argv[1] == 'new':
-        new(sys.argv[2])
-    elif sys.argv[1] == 'open':
-        open_vault(sys.argv[2])
-    elif sys.argv[1] == 'close':
-        close_vault(sys.argv[2])
-    elif sys.argv[1] == 'resize':
-        resize_vault(sys.argv[2])
+
+    command = sys.argv[1]
+    vault = sys.argv[2]
+
+    if command == "new":
+        new_vault(vault)
+    elif command == "open":
+        open_vault(vault)
+    elif command == "close":
+        close_vault(vault)
+    elif command == "resize":
+        resize_vault(vault)
     else:
         usage()
