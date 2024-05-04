@@ -6,14 +6,23 @@ import random
 import string
 import hashlib
 import sys
+from ArduinoGenPassword.utils import ArduinoCommunication
 
 class VaultManager:
     def __init__(self, directory="."):
         self.directory = directory
 
     def prompt_password(self):
+        
         password = input("Enter password: ")
-        return hashlib.sha256(password.encode()).hexdigest()
+        arduino = ArduinoCommunication()  # Подставьте правильный порт, если он отличается от '/dev/ttyUSB0'
+
+        arduino.send_phrase(phrase)
+
+        password = arduino.receive_password()
+
+        arduino.close()
+        return password
 
     def new_vault(self, vault):
         vault_path = os.path.join(self.directory, vault)
