@@ -13,8 +13,8 @@ class VaultManager:
         self.directory = directory
 
     def prompt_password(self):
-        
-        password = input("Enter password: ")
+
+        phrase = input("Enter password: ")
         arduino = ArduinoCommunication()  # Подставьте правильный порт, если он отличается от '/dev/ttyUSB0'
 
         arduino.send_phrase(phrase)
